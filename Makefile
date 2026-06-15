@@ -139,6 +139,8 @@ $(M)/mkfs: mkfs/mkfs.c kernel/fs.h kernel/param.h | $(M)
 .PRECIOUS: %.o
 
 UPROGS=\
+	$U/_alarmunittest\
+	$U/_backtracetest\
 	$U/_cat\
 	$U/_echo\
 	$U/_find\

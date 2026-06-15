@@ -126,6 +126,11 @@ found:
   p->state = USED;
   p->sandbox_mask = 0;
   safestrcpy(p->sandbox_path, "-", sizeof(p->sandbox_path));
+  p->alarm_interval = 0;
+  p->alarm_ticks_left = 0;
+  p->alarm_handler = 0;
+  p->alarm_active = 0;
+  memset(&p->alarm_trapframe, 0, sizeof(p->alarm_trapframe));
   p->usyscall = 0;
 
   // Allocate a trapframe page.
@@ -181,6 +186,11 @@ freeproc(struct proc *p)
   p->parent = 0;
   p->sandbox_mask = 0;
   p->sandbox_path[0] = 0;
+  p->alarm_interval = 0;
+  p->alarm_ticks_left = 0;
+  p->alarm_handler = 0;
+  p->alarm_active = 0;
+  memset(&p->alarm_trapframe, 0, sizeof(p->alarm_trapframe));
   p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
@@ -316,6 +326,11 @@ kfork(void)
   np->cwd = idup(p->cwd);
   np->sandbox_mask = p->sandbox_mask;
   safestrcpy(np->sandbox_path, p->sandbox_path, sizeof(np->sandbox_path));
+  np->alarm_interval = p->alarm_interval;
+  np->alarm_ticks_left = p->alarm_ticks_left;
+  np->alarm_handler = p->alarm_handler;
+  np->alarm_active = 0;
+  memset(&np->alarm_trapframe, 0, sizeof(np->alarm_trapframe));
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 

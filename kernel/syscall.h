@@ -22,3 +22,5 @@
 #define SYS_close  21
 #define SYS_interpose 22
 #define SYS_kpgtbl 23
+#define SYS_sigalarm 24
+#define SYS_sigreturn 25

@@ -73,6 +73,7 @@ sys_pause(void)
   argint(0, &n);
   if (n < 0)
     n = 0;
+  backtrace();
   acquire(&tickslock);
   ticks0 = ticks;
   while (ticks - ticks0 < n) {
@@ -127,4 +128,34 @@ sys_kpgtbl(void)
 {
   vmprint(myproc()->pagetable);
   return 0;
+}
+
+uint64
+sys_sigalarm(void)
+{
+  int ticks;
+  uint64 handler;
+  struct proc *p = myproc();
+
+  argint(0, &ticks);
+  argaddr(1, &handler);
+  if (ticks < 0)
+    return -1;
+
+  p->alarm_interval = ticks;
+  p->alarm_ticks_left = ticks;
+  p->alarm_handler = handler;
+  p->alarm_active = 0;
+  return 0;
+}
+
+uint64
+sys_sigreturn(void)
+{
+  struct proc *p = myproc();
+
+  memmove(p->trapframe, &p->alarm_trapframe, sizeof(struct trapframe));
+  p->alarm_active = 0;
+  p->alarm_ticks_left = p->alarm_interval;
+  return p->trapframe->a0;
 }

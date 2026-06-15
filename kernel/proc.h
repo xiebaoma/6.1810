@@ -105,5 +105,10 @@ struct proc {
   struct inode *cwd;           // Current directory
   uint64 sandbox_mask;         // Blocked syscall bitmap
   char sandbox_path[MAXPATH];  // Allowed path for masked open/exec
+  int alarm_interval;          // CPU ticks between alarm deliveries
+  int alarm_ticks_left;        // Countdown to next alarm
+  uint64 alarm_handler;        // User virtual address of alarm handler
+  int alarm_active;            // Non-zero while handler is running
+  struct trapframe alarm_trapframe; // Saved registers before alarm handler
   char name[16];               // Process name (debugging)
 };

@@ -26,6 +26,8 @@ int pause(int);
 int uptime(void);
 int interpose(int, const char *);
 int kpgtbl(void);
+int sigalarm(int, void (*)());
+int sigreturn(void);
 
 // ulib.c
 int stat(const char *, struct stat *);

@@ -44,3 +44,5 @@ entry("pause");
 entry("uptime");
 entry("interpose");
 entry("kpgtbl");
+entry("sigalarm");
+entry("sigreturn");
