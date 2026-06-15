@@ -57,7 +57,7 @@ sys_sbrk(void)
     // memory, vmfault() will allocate it.
     if (addr + n < addr)
       return -1;
-    if (addr + n > TRAPFRAME)
+    if (addr + n > USYSCALL)
       return -1;
     myproc()->sz += n;
   }
@@ -119,5 +119,12 @@ sys_interpose(void)
     return -1;
   }
   p->sandbox_mask = (uint64)mask;
+  return 0;
+}
+
+uint64
+sys_kpgtbl(void)
+{
+  vmprint(myproc()->pagetable);
   return 0;
 }

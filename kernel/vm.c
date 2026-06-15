@@ -7,6 +7,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "fs.h"
+#include "vm.h"
 
 /*
  * the kernel's page table.
@@ -16,6 +17,13 @@ pagetable_t kernel_pagetable;
 extern char etext[]; // kernel.ld sets this to end of kernel code.
 
 extern char trampoline[]; // trampoline.S
+
+static void vmprintwalk(pagetable_t pagetable, int level, int depth, uint64 va);
+static int pte_is_leaf(pte_t pte);
+static pte_t *walkleaf(pagetable_t pagetable, uint64 va, int *level);
+static pte_t *walkl1(pagetable_t pagetable, uint64 va, int alloc);
+static int mapsuperpages(pagetable_t pagetable, uint64 va, uint64 pa, int perm);
+static void demotesuperpage(pagetable_t pagetable, uint64 va, pte_t *superpte);
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -62,6 +70,128 @@ kvmmap(pagetable_t kpgtbl, uint64 va, uint64 pa, uint64 sz, int perm)
     panic("kvmmap");
 }
 
+static void
+vmprintwalk(pagetable_t pagetable, int level, int depth, uint64 va)
+{
+  for (int i = 0; i < 512; i++) {
+    pte_t pte = pagetable[i];
+    if ((pte & PTE_V) == 0)
+      continue;
+
+    uint64 pteva = va + ((uint64)i << PXSHIFT(level));
+    for (int d = 0; d < depth; d++) {
+      printf(" ..");
+    }
+    printf("%p: pte %p pa %p\n", (void *)pteva, (void *)pte, (void *)PTE2PA(pte));
+
+    if (level > 0 && (pte & (PTE_R | PTE_W | PTE_X)) == 0) {
+      vmprintwalk((pagetable_t)PTE2PA(pte), level - 1, depth + 1, pteva);
+    }
+  }
+}
+
+void
+vmprint(pagetable_t pagetable)
+{
+  printf("page table %p\n", pagetable);
+  vmprintwalk(pagetable, 2, 1, 0);
+}
+
+static int
+pte_is_leaf(pte_t pte)
+{
+  return (pte & (PTE_R | PTE_W | PTE_X)) != 0;
+}
+
+static pte_t *
+walkleaf(pagetable_t pagetable, uint64 va, int *level)
+{
+  pte_t *pte;
+
+  if (va >= MAXVA)
+    return 0;
+
+  pte = &pagetable[PX(2, va)];
+  if ((*pte & PTE_V) == 0)
+    return 0;
+  if (pte_is_leaf(*pte)) {
+    if (level)
+      *level = 2;
+    return pte;
+  }
+
+  pagetable = (pagetable_t)PTE2PA(*pte);
+  pte = &pagetable[PX(1, va)];
+  if ((*pte & PTE_V) == 0)
+    return 0;
+  if (pte_is_leaf(*pte)) {
+    if (level)
+      *level = 1;
+    return pte;
+  }
+
+  pagetable = (pagetable_t)PTE2PA(*pte);
+  pte = &pagetable[PX(0, va)];
+  if ((*pte & PTE_V) == 0)
+    return 0;
+  if (level)
+    *level = 0;
+  return pte;
+}
+
+static pte_t *
+walkl1(pagetable_t pagetable, uint64 va, int alloc)
+{
+  if (va >= MAXVA)
+    panic("walkl1");
+
+  pte_t *pte2 = &pagetable[PX(2, va)];
+  if (*pte2 & PTE_V) {
+    if (pte_is_leaf(*pte2))
+      return 0;
+    pagetable = (pagetable_t)PTE2PA(*pte2);
+  } else {
+    if (!alloc || (pagetable = (pagetable_t)kalloc()) == 0)
+      return 0;
+    memset(pagetable, 0, PGSIZE);
+    *pte2 = PA2PTE(pagetable) | PTE_V;
+  }
+  return &pagetable[PX(1, va)];
+}
+
+static int
+mapsuperpages(pagetable_t pagetable, uint64 va, uint64 pa, int perm)
+{
+  if ((va % SUPERPGSIZE) != 0 || (pa % SUPERPGSIZE) != 0)
+    panic("mapsuperpages: not aligned");
+  pte_t *pte = walkl1(pagetable, va, 1);
+  if (pte == 0)
+    return -1;
+  if (*pte & PTE_V)
+    panic("mapsuperpages: remap");
+  *pte = PA2PTE(pa) | perm | PTE_V;
+  return 0;
+}
+
+static void
+demotesuperpage(pagetable_t pagetable, uint64 va, pte_t *superpte)
+{
+  if ((va % SUPERPGSIZE) != 0)
+    panic("demotesuperpage: va");
+
+  uint64 pa = PTE2PA(*superpte);
+  uint flags = PTE_FLAGS(*superpte);
+  pagetable_t l0 = (pagetable_t)kalloc();
+  if (l0 == 0)
+    panic("demotesuperpage: oom");
+  memset(l0, 0, PGSIZE);
+
+  for (int i = 0; i < 512; i++) {
+    l0[i] = PA2PTE(pa + i * PGSIZE) | flags;
+  }
+  *superpte = PA2PTE(l0) | PTE_V;
+}
+
 // Initialize the kernel_pagetable, shared by all CPUs.
 void
 kvminit(void)
@@ -104,6 +234,8 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
   for (int level = 2; level > 0; level--) {
     pte_t *pte = &pagetable[PX(level, va)];
     if (*pte & PTE_V) {
+      if (pte_is_leaf(*pte))
+        return 0;
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
       if (!alloc || (pagetable = (pde_t *)kalloc()) == 0)
@@ -123,11 +255,12 @@ walkaddr(pagetable_t pagetable, uint64 va)
 {
   pte_t *pte;
   uint64 pa;
+  int level;
 
   if (va >= MAXVA)
     return 0;
 
-  pte = walk(pagetable, va, 0);
+  pte = walkleaf(pagetable, va, &level);
   if (pte == 0)
     return 0;
   if ((*pte & PTE_V) == 0)
@@ -135,7 +268,9 @@ walkaddr(pagetable_t pagetable, uint64 va)
   if ((*pte & PTE_U) == 0)
     return 0;
   pa = PTE2PA(*pte);
-  return pa;
+  if (level == 1)
+    return pa + (va & (SUPERPGSIZE - 1));
+  return pa + (va & (PGSIZE - 1));
 }
 
 // Create PTEs for virtual addresses starting at va that refer to
@@ -193,22 +328,46 @@ uvmcreate()
 void
 uvmunmap(pagetable_t pagetable, uint64 va, uint64 npages, int do_free)
 {
-  uint64 a;
+  uint64 a, end;
   pte_t *pte;
+  int level;
 
   if ((va % PGSIZE) != 0)
     panic("uvmunmap: not aligned");
 
-  for (a = va; a < va + npages * PGSIZE; a += PGSIZE) {
-    if ((pte = walk(pagetable, a, 0)) == 0) // leaf page table entry allocated?
+  end = va + npages * PGSIZE;
+  for (a = va; a < end;) {
+    pte = walkleaf(pagetable, a, &level);
+    if (pte == 0) { // leaf page table entry allocated?
+      a += PGSIZE;
       continue;
-    if ((*pte & PTE_V) == 0) // has physical page been allocated?
+    }
+    if ((*pte & PTE_V) == 0) { // has physical page been allocated?
+      a += PGSIZE;
       continue;
+    }
+
+    if (level == 1) {
+      uint64 superva = SUPERPGROUNDDOWN(a);
+      if (a == superva && end - a >= SUPERPGSIZE) {
+        if (do_free) {
+          uint64 pa = PTE2PA(*pte);
+          superfree((void *)pa);
+        }
+        *pte = 0;
+        a += SUPERPGSIZE;
+        continue;
+      }
+      demotesuperpage(pagetable, superva, pte);
+      continue;
+    }
+
     if (do_free) {
       uint64 pa = PTE2PA(*pte);
       kfree((void *)pa);
     }
     *pte = 0;
+    a += PGSIZE;
   }
 }
 
@@ -219,12 +378,31 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
 {
   char *mem;
   uint64 a;
+  int superok;
 
   if (newsz < oldsz)
     return oldsz;
 
+  superok = (xperm == PTE_W) && (newsz >= oldsz) && (newsz - oldsz >= SUPERPGSIZE);
   oldsz = PGROUNDUP(oldsz);
-  for (a = oldsz; a < newsz; a += PGSIZE) {
+  for (a = oldsz; a < newsz;) {
+    if (superok && (a % SUPERPGSIZE) == 0 && newsz - a >= SUPERPGSIZE) {
+      mem = superalloc();
+      if (mem == 0) {
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      memset(mem, 0, SUPERPGSIZE);
+      if (mapsuperpages(pagetable, a, (uint64)mem, PTE_R | PTE_U | xperm) !=
+          0) {
+        superfree(mem);
+        uvmdealloc(pagetable, a, oldsz);
+        return 0;
+      }
+      a += SUPERPGSIZE;
+      continue;
+    }
+
     mem = kalloc();
     if (mem == 0) {
       uvmdealloc(pagetable, a, oldsz);
@@ -237,6 +415,7 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
       uvmdealloc(pagetable, a, oldsz);
       return 0;
     }
+    a += PGSIZE;
   }
   return newsz;
 }
@@ -300,16 +479,47 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
+  uint64 mapva;
   uint flags;
   char *mem;
+  int level;
 
-  for (i = 0; i < sz; i += PGSIZE) {
-    if ((pte = walk(old, i, 0)) == 0)
+  for (i = 0; i < sz;) {
+    if ((pte = walkleaf(old, i, &level)) == 0) {
+      i += PGSIZE;
       continue; // page table entry hasn't been allocated
-    if ((*pte & PTE_V) == 0)
+    }
+    if ((*pte & PTE_V) == 0) {
+      i += PGSIZE;
       continue; // physical page hasn't been allocated
+    }
+
+    mapva = i;
+    if (level == 1)
+      mapva = SUPERPGROUNDDOWN(i);
+
+    if (level == 1 && i != mapva) {
+      i = mapva + SUPERPGSIZE;
+      continue;
+    }
+
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
+
+    if (level == 1) {
+      if ((mem = superalloc()) == 0)
+        goto err;
+      memmove(mem, (char *)pa, SUPERPGSIZE);
+      if (mapsuperpages(new, mapva, (uint64)mem, flags) != 0) {
+        superfree(mem);
+        goto err;
+      }
+      i += SUPERPGSIZE;
+      continue;
+    } else if (level != 0) {
+      panic("uvmcopy: level");
+    }
+
     if ((mem = kalloc()) == 0)
       goto err;
     memmove(mem, (char *)pa, PGSIZE);
@@ -317,6 +527,7 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       kfree(mem);
       goto err;
     }
+    i += PGSIZE;
   }
   return 0;
 
@@ -359,9 +570,9 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
       }
     }
 
-    pte = walk(pagetable, va0, 0);
+    pte = walkleaf(pagetable, va0, 0);
     // forbid copyout over read-only user text pages.
-    if ((*pte & PTE_W) == 0)
+    if (pte == 0 || (*pte & PTE_W) == 0)
       return -1;
 
     n = PGSIZE - (dstva - va0);
@@ -477,7 +688,7 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
 int
 ismapped(pagetable_t pagetable, uint64 va)
 {
-  pte_t *pte = walk(pagetable, va, 0);
+  pte_t *pte = walkleaf(pagetable, va, 0);
   if (pte == 0) {
     return 0;
   }

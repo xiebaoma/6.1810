@@ -8,6 +8,7 @@
 #include "spinlock.h"
 #include "riscv.h"
 #include "defs.h"
+#include "vm.h"
 
 void freerange(void *pa_start, void *pa_end);
 
@@ -21,13 +22,30 @@ struct run {
 struct {
   struct spinlock lock;
   struct run *freelist;
+  struct run *superfreelist;
+  uint64 super_start;
+  uint64 super_end;
 } kmem;
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
-  freerange(end, (void *)PHYSTOP);
+  kmem.super_end = PHYSTOP;
+  kmem.super_start = PHYSTOP - 4 * SUPERPGSIZE;
+  if (kmem.super_start < (uint64)end) {
+    kmem.super_start = (uint64)end;
+  }
+  kmem.super_start = SUPERPGROUNDUP(kmem.super_start);
+  if (kmem.super_start > kmem.super_end) {
+    kmem.super_start = kmem.super_end;
+  }
+
+  for (uint64 pa = kmem.super_start; pa + SUPERPGSIZE <= kmem.super_end;
+       pa += SUPERPGSIZE) {
+    superfree((void *)pa);
+  }
+  freerange(end, (void *)kmem.super_start);
 }
 
 void
@@ -78,5 +96,42 @@ kalloc(void)
 
   if (r)
     memset((char *)r, 5, PGSIZE); // fill with junk
+  return (void *)r;
+}
+
+void
+superfree(void *pa)
+{
+  struct run *r;
+
+  if (((uint64)pa % SUPERPGSIZE) != 0 || (uint64)pa < kmem.super_start ||
+      (uint64)pa + SUPERPGSIZE > kmem.super_end) {
+    panic("superfree");
+  }
+
+  memset(pa, 1, SUPERPGSIZE);
+
+  r = (struct run *)pa;
+  acquire(&kmem.lock);
+  r->next = kmem.superfreelist;
+  kmem.superfreelist = r;
+  release(&kmem.lock);
+}
+
+void *
+superalloc(void)
+{
+  struct run *r;
+
+  acquire(&kmem.lock);
+  r = kmem.superfreelist;
+  if (r) {
+    kmem.superfreelist = r->next;
+  }
+  release(&kmem.lock);
+
+  if (r) {
+    memset((char *)r, 5, SUPERPGSIZE);
+  }
   return (void *)r;
 }
