@@ -100,5 +100,7 @@ struct proc {
   struct context context;      // swtch() here to run process
   struct file *ofile[NOFILE];  // Open files
   struct inode *cwd;           // Current directory
+  uint64 sandbox_mask;         // Blocked syscall bitmap
+  char sandbox_path[MAXPATH];  // Allowed path for masked open/exec
   char name[16];               // Process name (debugging)
 };

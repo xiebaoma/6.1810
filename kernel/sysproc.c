@@ -107,3 +107,17 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_interpose(void)
+{
+  int mask;
+  struct proc *p = myproc();
+
+  argint(0, &mask);
+  if (argstr(1, p->sandbox_path, sizeof(p->sandbox_path)) < 0) {
+    return -1;
+  }
+  p->sandbox_mask = (uint64)mask;
+  return 0;
+}

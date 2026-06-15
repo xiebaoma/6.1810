@@ -179,6 +179,23 @@ class TestUserProgramsSmoke(unittest.TestCase):
         self.assertContains(out, r"lf1")
         self.sess.run_command("rm lf0 lf1", timeout=10)
 
+    def test_sandbox_interpose(self):
+        out = self.sess.run_command("sandbox 32768 - cat README", timeout=20)
+        self.assertContains(out, r"cat: cannot open README")
+
+        out = self.sess.run_command("sandbox 32768 README grep xv6 README", timeout=20)
+        self.assertContains(out, r"xv6 is a re-implementation")
+
+        out = self.sess.run_command("sandbox 32768 README grep xv6 x", timeout=20)
+        self.assertContains(out, r"grep: cannot open x")
+
+        # stressfs forks and opens files; blocked open in children verifies
+        # that interpose restrictions are inherited across fork().
+        self.sess.run_command("rm stressfs0 stressfs1 stressfs2 stressfs3", timeout=10)
+        self.sess.run_command("sandbox 32768 - stressfs", timeout=30)
+        out = self.sess.run_command("ls .", timeout=10)
+        self.assertIsNone(re.search(r"\\bstressfs[0-3]\\b", out))
+
     def test_usertests_quick(self):
         out = self.sess.run_command("usertests -q", timeout=360)
         self.assertContains(out, r"ALL TESTS PASSED")

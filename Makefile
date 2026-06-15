@@ -154,6 +154,7 @@ UPROGS=\
 	$U/_sh\
 	$U/_sixfive\
 	$U/_sleep\
+	$U/_sandbox\
 	$U/_stressfs\
 	$U/_uptime\
 	$U/_usertests\
