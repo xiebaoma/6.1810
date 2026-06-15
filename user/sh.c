@@ -3,6 +3,7 @@
 #include "kernel/types.h"
 #include "user/user.h"
 #include "kernel/fcntl.h"
+#include "kernel/stat.h"
 
 // Parsed command representation
 #define EXEC  1
@@ -12,6 +13,12 @@
 #define BACK  5
 
 #define MAXARGS 10
+#define HISTORY_SIZE 16
+#define CMD_BUF_SIZE 100
+
+int interactive_shell = 1;
+char history[HISTORY_SIZE][CMD_BUF_SIZE];
+int history_count = 0;
 
 struct cmd {
   int type;
@@ -53,6 +60,8 @@ int fork1(void); // Fork but panics on failure.
 void panic(char *);
 struct cmd *parsecmd(char *);
 void runcmd(struct cmd *) __attribute__((noreturn));
+void add_history(char *);
+void print_history(void);
 
 // Execute cmd.  Never returns.
 void
@@ -134,7 +143,8 @@ runcmd(struct cmd *cmd)
 int
 getcmd(char *buf, int nbuf)
 {
-  write(2, "$ ", 2);
+  if (interactive_shell)
+    write(2, "$ ", 2);
   memset(buf, 0, nbuf);
   gets(buf, nbuf);
   if (buf[0] == 0) // EOF
@@ -145,8 +155,9 @@ getcmd(char *buf, int nbuf)
 int
 main(void)
 {
-  static char buf[100];
+  static char buf[CMD_BUF_SIZE];
   int fd;
+  struct stat st;
 
   // Ensure that three file descriptors are open.
   while ((fd = open("console", O_RDWR)) >= 0) {
@@ -156,6 +167,9 @@ main(void)
     }
   }
 
+  if (fstat(0, &st) >= 0 && st.type != T_DEVICE)
+    interactive_shell = 0;
+
   // Read and run input commands.
   while (getcmd(buf, sizeof(buf)) >= 0) {
     char *cmd = buf;
@@ -163,11 +177,19 @@ main(void)
       cmd++;
     if (*cmd == '\n') // is a blank command
       continue;
+    add_history(cmd);
     if (cmd[0] == 'c' && cmd[1] == 'd' && cmd[2] == ' ') {
       // Chdir must be called by the parent, not the child.
       cmd[strlen(cmd) - 1] = 0; // chop \n
       if (chdir(cmd + 3) < 0)
         fprintf(2, "cannot cd %s\n", cmd + 3);
+    } else if (strcmp(cmd, "wait\n") == 0 || strcmp(cmd, "wait\r\n") == 0 ||
+               strcmp(cmd, "wait") == 0) {
+      while (wait(0) >= 0)
+        ;
+    } else if (strcmp(cmd, "history\n") == 0 || strcmp(cmd, "history\r\n") == 0 ||
+               strcmp(cmd, "history") == 0) {
+      print_history();
     } else {
       if (fork1() == 0)
         runcmd(parsecmd(cmd));
@@ -175,6 +197,46 @@ main(void)
     }
   }
   exit(0);
+}
+
+void
+add_history(char *cmd)
+{
+  int idx;
+  int i;
+  int n;
+
+  n = strlen(cmd);
+  while (n > 0 && (cmd[n - 1] == '\n' || cmd[n - 1] == '\r'))
+    n--;
+  if (n == 0)
+    return;
+
+  idx = history_count % HISTORY_SIZE;
+  if (n >= CMD_BUF_SIZE)
+    n = CMD_BUF_SIZE - 1;
+  for (i = 0; i < n; i++)
+    history[idx][i] = cmd[i];
+  history[idx][n] = '\0';
+  history_count++;
+}
+
+void
+print_history(void)
+{
+  int total;
+  int start;
+  int i;
+  int idx;
+
+  total = history_count;
+  if (total > HISTORY_SIZE)
+    total = HISTORY_SIZE;
+  start = history_count - total;
+  for (i = 0; i < total; i++) {
+    idx = (start + i) % HISTORY_SIZE;
+    printf("%d %s\n", start + i + 1, history[idx]);
+  }
 }
 
 void

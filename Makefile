@@ -141,16 +141,21 @@ $(M)/mkfs: mkfs/mkfs.c kernel/fs.h kernel/param.h | $(M)
 UPROGS=\
 	$U/_cat\
 	$U/_echo\
+	$U/_find\
 	$U/_forktest\
 	$U/_grep\
 	$U/_init\
 	$U/_kill\
 	$U/_ln\
 	$U/_ls\
+	$U/_memdump\
 	$U/_mkdir\
 	$U/_rm\
 	$U/_sh\
+	$U/_sixfive\
+	$U/_sleep\
 	$U/_stressfs\
+	$U/_uptime\
 	$U/_usertests\
 	$U/_grind\
 	$U/_wc\
