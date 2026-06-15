@@ -24,6 +24,7 @@ static pte_t *walkleaf(pagetable_t pagetable, uint64 va, int *level);
 static pte_t *walkl1(pagetable_t pagetable, uint64 va, int alloc);
 static int mapsuperpages(pagetable_t pagetable, uint64 va, uint64 pa, int perm);
 static void demotesuperpage(pagetable_t pagetable, uint64 va, pte_t *superpte);
+static uint64 cowcopy(pagetable_t pagetable, uint64 va);
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -389,18 +390,19 @@ uvmalloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz, int xperm)
     if (superok && (a % SUPERPGSIZE) == 0 && newsz - a >= SUPERPGSIZE) {
       mem = superalloc();
       if (mem == 0) {
-        uvmdealloc(pagetable, a, oldsz);
-        return 0;
+        // fall back to regular pages when superpage pool is exhausted.
+        superok = 0;
+      } else {
+        memset(mem, 0, SUPERPGSIZE);
+        if (mapsuperpages(pagetable, a, (uint64)mem, PTE_R | PTE_U | xperm) !=
+            0) {
+          superfree(mem);
+          uvmdealloc(pagetable, a, oldsz);
+          return 0;
+        }
+        a += SUPERPGSIZE;
+        continue;
       }
-      memset(mem, 0, SUPERPGSIZE);
-      if (mapsuperpages(pagetable, a, (uint64)mem, PTE_R | PTE_U | xperm) !=
-          0) {
-        superfree(mem);
-        uvmdealloc(pagetable, a, oldsz);
-        return 0;
-      }
-      a += SUPERPGSIZE;
-      continue;
     }
 
     mem = kalloc();
@@ -479,10 +481,9 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
-  uint64 mapva;
   uint flags;
-  char *mem;
   int level;
+  int parent_changed = 0;
 
   for (i = 0; i < sz;) {
     if ((pte = walkleaf(old, i, &level)) == 0) {
@@ -494,45 +495,48 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       continue; // physical page hasn't been allocated
     }
 
-    mapva = i;
-    if (level == 1)
-      mapva = SUPERPGROUNDDOWN(i);
-
-    if (level == 1 && i != mapva) {
-      i = mapva + SUPERPGSIZE;
+    if (level == 1 && i != SUPERPGROUNDDOWN(i)) {
+      i = SUPERPGROUNDDOWN(i) + SUPERPGSIZE;
       continue;
     }
 
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
+    if (flags & PTE_W) {
+      flags = (flags & ~PTE_W) | PTE_COW;
+    }
 
     if (level == 1) {
-      if ((mem = superalloc()) == 0)
-        goto err;
-      memmove(mem, (char *)pa, SUPERPGSIZE);
-      if (mapsuperpages(new, mapva, (uint64)mem, flags) != 0) {
-        superfree(mem);
+      if (mapsuperpages(new, SUPERPGROUNDDOWN(i), pa, flags) != 0) {
         goto err;
       }
+      if (*pte != (PA2PTE(pa) | flags)) {
+        *pte = PA2PTE(pa) | flags;
+        parent_changed = 1;
+      }
+      kaddref((void *)pa);
       i += SUPERPGSIZE;
       continue;
     } else if (level != 0) {
       panic("uvmcopy: level");
     }
 
-    if ((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char *)pa, PGSIZE);
-    if (mappages(new, i, PGSIZE, (uint64)mem, flags) != 0) {
-      kfree(mem);
+    if (mappages(new, i, PGSIZE, pa, flags) != 0) {
       goto err;
     }
+    if (*pte != (PA2PTE(pa) | flags)) {
+      *pte = PA2PTE(pa) | flags;
+      parent_changed = 1;
+    }
+    kaddref((void *)pa);
     i += PGSIZE;
   }
+  if (parent_changed)
+    sfence_vma();
   return 0;
 
 err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
+  uvmunmap(new, 0, PGROUNDUP(i) / PGSIZE, 1);
   return -1;
 }
 
@@ -563,17 +567,21 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
     if (va0 >= MAXVA)
       return -1;
 
-    pa0 = walkaddr(pagetable, va0);
-    if (pa0 == 0) {
-      if ((pa0 = vmfault(pagetable, va0, 0)) == 0) {
+    pte = walkleaf(pagetable, va0, 0);
+    if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_U) == 0)
+      return -1;
+    if ((*pte & PTE_W) == 0) {
+      if ((*pte & PTE_COW) == 0)
         return -1;
+      if ((pa0 = vmfault(pagetable, va0, 0)) == 0)
+        return -1;
+    } else {
+      pa0 = walkaddr(pagetable, va0);
+      if (pa0 == 0) {
+        if ((pa0 = vmfault(pagetable, va0, 0)) == 0)
+          return -1;
       }
     }
-
-    pte = walkleaf(pagetable, va0, 0);
-    // forbid copyout over read-only user text pages.
-    if (pte == 0 || (*pte & PTE_W) == 0)
-      return -1;
 
     n = PGSIZE - (dstva - va0);
     if (n > len)
@@ -667,10 +675,23 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
 {
   uint64 mem;
   struct proc *p = myproc();
+  pte_t *pte;
+  int level;
+  int mapflags;
 
   if (va >= p->sz)
     return 0;
   va = PGROUNDDOWN(va);
+  pte = walkleaf(pagetable, va, &level);
+  if (pte && (*pte & PTE_V) && (*pte & PTE_U)) {
+    if (read)
+      return walkaddr(pagetable, va);
+    if ((*pte & PTE_W) != 0)
+      return walkaddr(pagetable, va);
+    if ((*pte & PTE_COW) == 0)
+      return 0;
+    return cowcopy(pagetable, va);
+  }
   if (ismapped(pagetable, va)) {
     return 0;
   }
@@ -678,11 +699,52 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   if (mem == 0)
     return 0;
   memset((void *)mem, 0, PGSIZE);
-  if (mappages(p->pagetable, va, PGSIZE, mem, PTE_W | PTE_U | PTE_R) != 0) {
+  mapflags = PTE_W | PTE_U | PTE_R;
+  if (mappages(pagetable, va, PGSIZE, mem, mapflags) != 0) {
     kfree((void *)mem);
     return 0;
   }
   return mem;
+}
+
+static uint64
+cowcopy(pagetable_t pagetable, uint64 va)
+{
+  pte_t *pte;
+  uint64 oldpa;
+  uint64 newpa;
+  uint flags;
+  int level;
+
+  pte = walkleaf(pagetable, va, &level);
+  if (pte == 0 || (*pte & PTE_V) == 0 || (*pte & PTE_COW) == 0)
+    return 0;
+
+  oldpa = PTE2PA(*pte);
+  flags = PTE_FLAGS(*pte);
+  flags = (flags | PTE_W) & ~PTE_COW;
+
+  if (level == 1) {
+    void *mem = superalloc();
+    if (mem == 0)
+      return 0;
+    memmove(mem, (void *)oldpa, SUPERPGSIZE);
+    *pte = PA2PTE((uint64)mem) | flags;
+    sfence_vma();
+    superfree((void *)oldpa);
+    return (uint64)mem + (va & (SUPERPGSIZE - 1));
+  } else if (level == 0) {
+    void *mem = kalloc();
+    if (mem == 0)
+      return 0;
+    memmove(mem, (void *)oldpa, PGSIZE);
+    newpa = (uint64)mem;
+    *pte = PA2PTE(newpa) | flags;
+    sfence_vma();
+    kfree((void *)oldpa);
+    return newpa + (va & (PGSIZE - 1));
+  }
+  panic("cowcopy level");
 }
 
 int

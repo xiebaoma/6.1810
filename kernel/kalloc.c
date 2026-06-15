@@ -19,18 +19,43 @@ struct run {
   struct run *next;
 };
 
+#define NPAGES      ((PHYSTOP - KERNBASE) / PGSIZE)
+#define NSUPERPAGES ((PHYSTOP - KERNBASE) / SUPERPGSIZE)
+
 struct {
   struct spinlock lock;
   struct run *freelist;
   struct run *superfreelist;
   uint64 super_start;
   uint64 super_end;
+  int pageref[NPAGES];
+  int superref[NSUPERPAGES];
 } kmem;
+
+static int
+is_super_pa(uint64 pa)
+{
+  return pa >= kmem.super_start && pa < kmem.super_end;
+}
+
+static int
+page_index(uint64 pa)
+{
+  return (pa - KERNBASE) / PGSIZE;
+}
+
+static int
+super_index(uint64 pa)
+{
+  return (pa - KERNBASE) / SUPERPGSIZE;
+}
 
 void
 kinit()
 {
   initlock(&kmem.lock, "kmem");
+  memset(kmem.pageref, 0, sizeof(kmem.pageref));
+  memset(kmem.superref, 0, sizeof(kmem.superref));
   kmem.super_end = PHYSTOP;
   kmem.super_start = PHYSTOP - 4 * SUPERPGSIZE;
   if (kmem.super_start < (uint64)end) {
@@ -43,6 +68,7 @@ kinit()
 
   for (uint64 pa = kmem.super_start; pa + SUPERPGSIZE <= kmem.super_end;
        pa += SUPERPGSIZE) {
+    kmem.superref[super_index(pa)] = 1;
     superfree((void *)pa);
   }
   freerange(end, (void *)kmem.super_start);
@@ -53,8 +79,10 @@ freerange(void *pa_start, void *pa_end)
 {
   char *p;
   p = (char *)PGROUNDUP((uint64)pa_start);
-  for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE)
+  for (; p + PGSIZE <= (char *)pa_end; p += PGSIZE) {
+    kmem.pageref[page_index((uint64)p)] = 1;
     kfree(p);
+  }
 }
 
 // Free the page of physical memory pointed at by pa,
@@ -65,16 +93,23 @@ void
 kfree(void *pa)
 {
   struct run *r;
+  int idx;
 
   if (((uint64)pa % PGSIZE) != 0 || (char *)pa < end || (uint64)pa >= PHYSTOP)
     panic("kfree");
 
+  acquire(&kmem.lock);
+  idx = page_index((uint64)pa);
+  if (kmem.pageref[idx] < 1)
+    panic("kfree ref");
+  kmem.pageref[idx]--;
+  if (kmem.pageref[idx] > 0) {
+    release(&kmem.lock);
+    return;
+  }
   // Fill with junk to catch dangling refs.
   memset(pa, 1, PGSIZE);
-
   r = (struct run *)pa;
-
-  acquire(&kmem.lock);
   r->next = kmem.freelist;
   kmem.freelist = r;
   release(&kmem.lock);
@@ -90,8 +125,10 @@ kalloc(void)
 
   acquire(&kmem.lock);
   r = kmem.freelist;
-  if (r)
+  if (r) {
     kmem.freelist = r->next;
+    kmem.pageref[page_index((uint64)r)] = 1;
+  }
   release(&kmem.lock);
 
   if (r)
@@ -100,19 +137,44 @@ kalloc(void)
 }
 
 void
+kaddref(void *pa)
+{
+  uint64 a = (uint64)pa;
+
+  acquire(&kmem.lock);
+  if (is_super_pa(a)) {
+    if ((a % SUPERPGSIZE) != 0)
+      panic("kaddref super");
+    kmem.superref[super_index(a)]++;
+  } else {
+    if ((a % PGSIZE) != 0)
+      panic("kaddref page");
+    kmem.pageref[page_index(a)]++;
+  }
+  release(&kmem.lock);
+}
+
+void
 superfree(void *pa)
 {
   struct run *r;
+  int idx;
 
   if (((uint64)pa % SUPERPGSIZE) != 0 || (uint64)pa < kmem.super_start ||
       (uint64)pa + SUPERPGSIZE > kmem.super_end) {
     panic("superfree");
   }
-
-  memset(pa, 1, SUPERPGSIZE);
-
-  r = (struct run *)pa;
   acquire(&kmem.lock);
+  idx = super_index((uint64)pa);
+  if (kmem.superref[idx] < 1)
+    panic("superfree ref");
+  kmem.superref[idx]--;
+  if (kmem.superref[idx] > 0) {
+    release(&kmem.lock);
+    return;
+  }
+  memset(pa, 1, SUPERPGSIZE);
+  r = (struct run *)pa;
   r->next = kmem.superfreelist;
   kmem.superfreelist = r;
   release(&kmem.lock);
@@ -127,6 +189,7 @@ superalloc(void)
   r = kmem.superfreelist;
   if (r) {
     kmem.superfreelist = r->next;
+    kmem.superref[super_index((uint64)r)] = 1;
   }
   release(&kmem.lock);
 

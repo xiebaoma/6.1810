@@ -20,7 +20,7 @@ You can view your changes with git diff, which displays changes since your last 
 
 Build and run xv6:
 
-$ make qemu
+$ make qemu3
 riscv64-unknown-elf-gcc    -c -o kernel/entry.o kernel/entry.S
 riscv64-unknown-elf-gcc -Wall -Werror -O -fno-omit-frame-pointer -ggdb -DSOL_UTIL -MD -mcmodel=medany -ffreestanding -fno-common -nostdlib -mno-relax -I. -fno-stack-protector -fno-pie -no-pie   -c -o kernel/start.o kernel/start.c
 ...
