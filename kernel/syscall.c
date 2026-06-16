@@ -106,6 +106,10 @@ extern uint64 sys_interpose(void);
 extern uint64 sys_kpgtbl(void);
 extern uint64 sys_sigalarm(void);
 extern uint64 sys_sigreturn(void);
+extern uint64 sys_bind(void);
+extern uint64 sys_unbind(void);
+extern uint64 sys_send(void);
+extern uint64 sys_recv(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -136,6 +140,10 @@ static uint64 (*syscalls[])(void) = {
   [SYS_kpgtbl]  sys_kpgtbl,
   [SYS_sigalarm]  sys_sigalarm,
   [SYS_sigreturn] sys_sigreturn,
+  [SYS_bind]    sys_bind,
+  [SYS_unbind]  sys_unbind,
+  [SYS_send]    sys_send,
+  [SYS_recv]    sys_recv,
   // clang-format on
 };
 

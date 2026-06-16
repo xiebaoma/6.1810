@@ -12,6 +12,7 @@
 #define SYS_getpid 11
 #define SYS_sbrk   12
 #define SYS_pause  13
+#define SYS_sleep  13
 #define SYS_uptime 14
 #define SYS_open   15
 #define SYS_write  16
@@ -24,3 +25,7 @@
 #define SYS_kpgtbl 23
 #define SYS_sigalarm 24
 #define SYS_sigreturn 25
+#define SYS_bind 26
+#define SYS_unbind 27
+#define SYS_send 28
+#define SYS_recv 29

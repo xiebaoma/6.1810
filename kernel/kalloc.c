@@ -11,6 +11,7 @@
 #include "vm.h"
 
 void freerange(void *pa_start, void *pa_end);
+void superfree(void *pa);
 
 extern char end[]; // first address after kernel.
                    // defined by kernel.ld.

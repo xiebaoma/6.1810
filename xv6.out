@@ -1,0 +1,59 @@
+
+xv6 kernel is booting
+
+hart 1 starting
+hart 2 starting
+init: starting sh
+$ nettest grade
+txone: sending one packet
+backtrace:
+0x000000008000345a
+0x0000000080003320
+arp_rx: received an ARP packet
+0x000000008000300e
+ip_rx: received an IP packet
+ping0: starting
+ping0: OK
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+ping1: starting
+ping1: OK
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+ping2: starting
+ping2: OK
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+ping3: starting
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+ping3: OK
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+dns: starting
+DNS arecord for pdos.csail.mit.edu. is 128.52.129.126
+dns: OK
+backtrace:
+0x000000008000345a
+0x0000000080003320
+0x000000008000300e
+free: OK
+$ qemu-system-riscv64: terminating on signal 15 from pid 1503080 (make)

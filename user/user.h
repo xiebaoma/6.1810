@@ -23,11 +23,16 @@ int dup(int);
 int getpid(void);
 char *sys_sbrk(int, int);
 int pause(int);
+int sleep(int);
 int uptime(void);
 int interpose(int, const char *);
 int kpgtbl(void);
 int sigalarm(int, void (*)());
 int sigreturn(void);
+int bind(uint16);
+int unbind(uint16);
+int send(uint16, uint32, uint16, char *, uint32);
+int recv(uint16, uint32 *, uint16 *, char *, uint32);
 
 // ulib.c
 int stat(const char *, struct stat *);

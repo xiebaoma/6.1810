@@ -28,6 +28,8 @@ main()
     iinit();            // inode table
     fileinit();         // file table
     virtio_disk_init(); // emulated hard disk
+    netinit();          // network state
+    pci_init();         // e1000 init
     userinit();         // first user process
     __atomic_thread_fence(__ATOMIC_SEQ_CST);
     started = 1;

@@ -32,7 +32,10 @@ OBJS = \
   $K/sysfile.o \
   $K/kernelvec.o \
   $K/plic.o \
-  $K/virtio_disk.o
+  $K/virtio_disk.o \
+  $K/e1000.o \
+  $K/net.o \
+  $K/pci.o
 
 # riscv64-unknown-elf- or riscv64-linux-gnu-
 # perhaps in /opt/riscv/bin
@@ -167,6 +170,8 @@ UPROGS=\
 	$U/_logstress\
 	$U/_forphan\
 	$U/_dorphan\
+	$U/_nettest\
+	$U/_pingpong\
 
 MKFS_UPROGS=$(patsubst $(U)/%,user/%,$(UPROGS))
 
@@ -194,10 +199,18 @@ ifndef CPUS
 CPUS := 3
 endif
 
+NET_TESTS_PORT = $(shell expr `id -u` % 5000 + 25099)
+CFLAGS += -DNET_TESTS_PORT=$(NET_TESTS_PORT)
+
+FWDPORT1 = $(shell expr `id -u` % 5000 + 25999)
+FWDPORT2 = $(shell expr `id -u` % 5000 + 30999)
+
 QEMUOPTS = -machine virt -bios none -kernel $K/kernel -m 128M -smp $(CPUS) -nographic
 QEMUOPTS += -global virtio-mmio.force-legacy=false
 QEMUOPTS += -drive file=$(FSIMG),if=none,format=raw,id=x0
 QEMUOPTS += -device virtio-blk-device,drive=x0,bus=virtio-mmio-bus.0
+QEMUOPTS += -netdev user,id=net0,hostfwd=udp::$(FWDPORT1)-:2000,hostfwd=udp::$(FWDPORT2)-:2001 -object filter-dump,id=net0,netdev=net0,file=packets.pcap
+QEMUOPTS += -device e1000,netdev=net0,bus=pcie.0
 
 qemu: check-qemu-version $K/kernel $(FSIMG)
 	$(QEMU) $(QEMUOPTS)
