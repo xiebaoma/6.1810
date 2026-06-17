@@ -5,8 +5,11 @@
 #include "riscv.h"
 #include "defs.h"
 #include "spinlock.h"
+#include "sleeplock.h"
 #include "proc.h"
 #include "fs.h"
+#include "file.h"
+#include "fcntl.h"
 #include "vm.h"
 
 /*
@@ -25,6 +28,9 @@ static pte_t *walkl1(pagetable_t pagetable, uint64 va, int alloc);
 static int mapsuperpages(pagetable_t pagetable, uint64 va, uint64 pa, int perm);
 static void demotesuperpage(pagetable_t pagetable, uint64 va, pte_t *superpte);
 static uint64 cowcopy(pagetable_t pagetable, uint64 va);
+static struct vma *findvma(struct proc *p, uint64 va);
+static uint64 mmaploadpage(struct proc *p, struct vma *v, uint64 va);
+static int mmapwriteback(struct vma *v, uint64 va, uint64 pa, uint n);
 
 // Make a direct-map page table for the kernel.
 pagetable_t
@@ -674,6 +680,84 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 // that was lazily allocated in sys_sbrk().
 // returns 0 if va is invalid or already mapped, or if
 // out of physical memory, and physical address if successful.
+static struct vma *
+findvma(struct proc *p, uint64 va)
+{
+  for (int i = 0; i < MAXVMA; i++) {
+    if (!p->vmas[i].used)
+      continue;
+    if (va >= p->vmas[i].addr && va < p->vmas[i].addr + p->vmas[i].len)
+      return &p->vmas[i];
+  }
+  return 0;
+}
+
+static uint64
+mmaploadpage(struct proc *p, struct vma *v, uint64 va)
+{
+  char *mem;
+  int perm = PTE_U;
+  uint64 off;
+  int nread;
+
+  if (v->f == 0 || v->f->type != FD_INODE)
+    return 0;
+
+  if (v->prot & PROT_READ)
+    perm |= PTE_R;
+  if (v->prot & PROT_WRITE)
+    perm |= (PTE_R | PTE_W);
+  if (v->prot & PROT_EXEC)
+    perm |= PTE_X;
+
+  mem = kalloc();
+  if (mem == 0)
+    return 0;
+  memset(mem, 0, PGSIZE);
+
+  off = v->foff + (va - v->addr);
+  ilock(v->f->ip);
+  nread = readi(v->f->ip, 0, (uint64)mem, off, PGSIZE);
+  iunlock(v->f->ip);
+  if (nread < 0) {
+    kfree(mem);
+    return 0;
+  }
+
+  if (mappages(p->pagetable, va, PGSIZE, (uint64)mem, perm) != 0) {
+    kfree(mem);
+    return 0;
+  }
+  return (uint64)mem;
+}
+
+static int
+mmapwriteback(struct vma *v, uint64 va, uint64 pa, uint n)
+{
+  int max = ((MAXOPBLOCKS - 1 - 1 - 2) / 2) * BSIZE;
+  uint64 off = v->foff + (va - v->addr);
+  uint i = 0;
+
+  if (v->f == 0 || v->f->type != FD_INODE)
+    return -1;
+
+  while (i < n) {
+    int n1 = n - i;
+    int r;
+    if (n1 > max)
+      n1 = max;
+    begin_op();
+    ilock(v->f->ip);
+    r = writei(v->f->ip, 0, pa + i, off + i, n1);
+    iunlock(v->f->ip);
+    end_op();
+    if (r != n1)
+      return -1;
+    i += r;
+  }
+  return 0;
+}
+
 uint64
 vmfault(pagetable_t pagetable, uint64 va, int read)
 {
@@ -682,9 +766,8 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
   pte_t *pte;
   int level;
   int mapflags;
+  struct vma *v;
 
-  if (va >= p->sz)
-    return 0;
   va = PGROUNDDOWN(va);
   pte = walkleaf(pagetable, va, &level);
   if (pte && (*pte & PTE_V) && (*pte & PTE_U)) {
@@ -696,6 +779,16 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
       return 0;
     return cowcopy(pagetable, va);
   }
+  v = findvma(p, va);
+  if (v) {
+    if (read && (v->prot & PROT_READ) == 0)
+      return 0;
+    if (!read && (v->prot & PROT_WRITE) == 0)
+      return 0;
+    return mmaploadpage(p, v, va);
+  }
+  if (va >= p->sz)
+    return 0;
   if (ismapped(pagetable, va)) {
     return 0;
   }
@@ -709,6 +802,61 @@ vmfault(pagetable_t pagetable, uint64 va, int read)
     return 0;
   }
   return mem;
+}
+
+int
+munmap_region(struct proc *p, uint64 addr, uint64 len, int do_writeback)
+{
+  struct vma *v = 0;
+  uint64 a;
+  uint64 end;
+
+  if ((addr % PGSIZE) != 0 || len == 0)
+    return -1;
+  len = PGROUNDUP(len);
+
+  for (int i = 0; i < MAXVMA; i++) {
+    if (!p->vmas[i].used)
+      continue;
+    if (addr >= p->vmas[i].addr && addr + len <= p->vmas[i].addr + p->vmas[i].len) {
+      v = &p->vmas[i];
+      break;
+    }
+  }
+  if (v == 0)
+    return -1;
+
+  end = addr + len;
+  if (addr != v->addr && end != v->addr + v->len)
+    return -1;
+
+  if (do_writeback && (v->flags & MAP_SHARED) && (v->prot & PROT_WRITE)) {
+    for (a = addr; a < end; a += PGSIZE) {
+      uint64 pa = walkaddr(p->pagetable, a);
+      if (pa == 0)
+        continue;
+      uint n = PGSIZE;
+      uint64 voff = a - v->addr;
+      if (voff + n > v->len)
+        n = v->len - voff;
+      if (n > 0 && mmapwriteback(v, a, pa, n) < 0)
+        return -1;
+    }
+  }
+
+  uvmunmap(p->pagetable, addr, len / PGSIZE, 1);
+
+  if (addr == v->addr && len == v->len) {
+    fileclose(v->f);
+    memset(v, 0, sizeof(*v));
+  } else if (addr == v->addr) {
+    v->addr += len;
+    v->len -= len;
+    v->foff += len;
+  } else {
+    v->len -= len;
+  }
+  return 0;
 }
 
 static uint64

@@ -88,6 +88,12 @@ sys_pause(void)
 }
 
 uint64
+sys_sleep(void)
+{
+  return sys_pause();
+}
+
+uint64
 sys_kill(void)
 {
   int pid;

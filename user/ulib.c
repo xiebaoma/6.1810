@@ -160,3 +160,9 @@ sbrklazy(int n)
 {
   return sys_sbrk(n, SBRK_LAZY);
 }
+
+int
+pause(int n)
+{
+  return sleep(n);
+}

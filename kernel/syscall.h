@@ -11,6 +11,7 @@
 #define SYS_dup    10
 #define SYS_getpid 11
 #define SYS_sbrk   12
+#define SYS_sys_sbrk SYS_sbrk
 #define SYS_sleep  13
 #define SYS_uptime 14
 #define SYS_open   15
@@ -21,3 +22,14 @@
 #define SYS_mkdir  20
 #define SYS_close  21
 #define SYS_symlink 22
+#define SYS_mmap   23
+#define SYS_munmap 24
+#define SYS_interpose 25
+#define SYS_kpgtbl 26
+#define SYS_sigalarm 27
+#define SYS_sigreturn 28
+#define SYS_rwlktest 29
+#define SYS_bind 30
+#define SYS_unbind 31
+#define SYS_send 32
+#define SYS_recv 33

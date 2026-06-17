@@ -131,6 +131,8 @@ found:
   p->alarm_handler = 0;
   p->alarm_active = 0;
   memset(&p->alarm_trapframe, 0, sizeof(p->alarm_trapframe));
+  p->mmapbase = USYSCALL;
+  memset(p->vmas, 0, sizeof(p->vmas));
   p->usyscall = 0;
 
   // Allocate a trapframe page.
@@ -191,6 +193,8 @@ freeproc(struct proc *p)
   p->alarm_handler = 0;
   p->alarm_active = 0;
   memset(&p->alarm_trapframe, 0, sizeof(p->alarm_trapframe));
+  p->mmapbase = 0;
+  memset(p->vmas, 0, sizeof(p->vmas));
   p->name[0] = 0;
   p->chan = 0;
   p->killed = 0;
@@ -331,6 +335,12 @@ kfork(void)
   np->alarm_handler = p->alarm_handler;
   np->alarm_active = 0;
   memset(&np->alarm_trapframe, 0, sizeof(np->alarm_trapframe));
+  np->mmapbase = p->mmapbase;
+  for (i = 0; i < MAXVMA; i++) {
+    np->vmas[i] = p->vmas[i];
+    if (np->vmas[i].used && np->vmas[i].f)
+      filedup(np->vmas[i].f);
+  }
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
@@ -374,6 +384,12 @@ kexit(int status)
 
   if (p == initproc)
     panic("init exiting");
+
+  for (int i = 0; i < MAXVMA; i++) {
+    if (p->vmas[i].used) {
+      munmap_region(p, p->vmas[i].addr, p->vmas[i].len, 1);
+    }
+  }
 
   // Close all open files.
   for (int fd = 0; fd < NOFILE; fd++) {

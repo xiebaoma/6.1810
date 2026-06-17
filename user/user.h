@@ -1,5 +1,7 @@
 struct stat;
 
+#define SBRK_ERROR ((char *)-1)
+
 // system calls
 int fork(void);
 int exit(int) __attribute__((noreturn));
@@ -20,9 +22,23 @@ int chdir(const char*);
 int dup(int);
 int getpid(void);
 char* sbrk(int);
+char* sbrklazy(int);
+char* sys_sbrk(int, int);
 int sleep(int);
+int pause(int);
 int uptime(void);
 int symlink(const char*, const char*);
+void *mmap(void *, int, int, int, int, int);
+int munmap(void *, int);
+int interpose(int, const char *);
+int kpgtbl(void);
+int sigalarm(int, void (*handler)());
+int sigreturn(void);
+int rwlktest(int);
+int bind(int);
+int unbind(int);
+int send(int, int, int, char *, int);
+int recv(int, uint *, ushort *, char *, int);
 
 // ulib.c
 int stat(const char*, struct stat*);

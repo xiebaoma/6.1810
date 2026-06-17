@@ -11,6 +11,7 @@
 #include "stat.h"
 #include "spinlock.h"
 #include "proc.h"
+#include "memlayout.h"
 #include "fs.h"
 #include "sleeplock.h"
 #include "file.h"
@@ -509,7 +510,7 @@ sys_exec(void)
       goto bad;
   }
 
-  int ret = exec(path, argv);
+  int ret = kexec(path, argv);
 
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
     kfree(argv[i]);
@@ -520,6 +521,101 @@ sys_exec(void)
   for(i = 0; i < NELEM(argv) && argv[i] != 0; i++)
     kfree(argv[i]);
   return -1;
+}
+
+uint64
+sys_mmap(void)
+{
+  uint64 addr;
+  int len, prot, flags, fd, off;
+  struct file *f;
+  struct proc *p = myproc();
+  uint64 a, low;
+  struct vma *slot = 0;
+
+  argaddr(0, &addr);
+  argint(1, &len);
+  argint(2, &prot);
+  argint(3, &flags);
+  argint(4, &fd);
+  argint(5, &off);
+
+  if (addr != 0 || len <= 0 || off != 0)
+    return -1;
+  if ((flags & (MAP_SHARED | MAP_PRIVATE)) == 0)
+    return -1;
+  if ((flags & MAP_SHARED) && (flags & MAP_PRIVATE))
+    return -1;
+  if ((prot & (PROT_READ | PROT_WRITE | PROT_EXEC)) == 0)
+    return -1;
+
+  if (argfd(4, 0, &f) < 0)
+    return -1;
+  if ((prot & PROT_READ) && !f->readable)
+    return -1;
+  if ((flags & MAP_SHARED) && (prot & PROT_WRITE) && !f->writable)
+    return -1;
+
+  len = PGROUNDUP(len);
+  low = PGROUNDUP(p->sz);
+
+  for (int i = 0; i < MAXVMA; i++) {
+    if (!p->vmas[i].used) {
+      slot = &p->vmas[i];
+      break;
+    }
+  }
+  if (slot == 0)
+    return -1;
+
+  a = PGROUNDDOWN(USYSCALL - len);
+  while (a >= low) {
+    int overlap = 0;
+    for (int i = 0; i < MAXVMA; i++) {
+      if (!p->vmas[i].used)
+        continue;
+      uint64 start = p->vmas[i].addr;
+      uint64 end = start + p->vmas[i].len;
+      if (a < end && a + len > start) {
+        overlap = 1;
+        break;
+      }
+    }
+    if (!overlap)
+      break;
+    if (a < PGSIZE)
+      return -1;
+    a -= PGSIZE;
+  }
+  if (a < low)
+    return -1;
+
+  filedup(f);
+  slot->used = 1;
+  slot->addr = a;
+  slot->len = len;
+  slot->prot = prot;
+  slot->flags = flags;
+  slot->foff = 0;
+  slot->f = f;
+
+  return a;
+}
+
+uint64
+sys_munmap(void)
+{
+  uint64 addr;
+  int len;
+
+  argaddr(0, &addr);
+  argint(1, &len);
+  if (len <= 0)
+    return -1;
+
+  if (munmap_region(myproc(), addr, len, 1) < 0)
+    return -1;
+  return 0;
 }
 
 uint64

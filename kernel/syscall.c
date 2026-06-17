@@ -102,6 +102,17 @@ extern uint64 sys_link(void);
 extern uint64 sys_mkdir(void);
 extern uint64 sys_close(void);
 extern uint64 sys_symlink(void);
+extern uint64 sys_mmap(void);
+extern uint64 sys_munmap(void);
+extern uint64 sys_interpose(void);
+extern uint64 sys_kpgtbl(void);
+extern uint64 sys_sigalarm(void);
+extern uint64 sys_sigreturn(void);
+extern uint64 sys_rwlktest(void);
+extern uint64 sys_bind(void);
+extern uint64 sys_unbind(void);
+extern uint64 sys_send(void);
+extern uint64 sys_recv(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -128,6 +139,17 @@ static uint64 (*syscalls[])(void) = {
 [SYS_mkdir]   sys_mkdir,
 [SYS_close]   sys_close,
 [SYS_symlink] sys_symlink,
+[SYS_mmap]    sys_mmap,
+[SYS_munmap]  sys_munmap,
+[SYS_interpose] sys_interpose,
+[SYS_kpgtbl]    sys_kpgtbl,
+[SYS_sigalarm]  sys_sigalarm,
+[SYS_sigreturn] sys_sigreturn,
+[SYS_rwlktest]  sys_rwlktest,
+[SYS_bind]      sys_bind,
+[SYS_unbind]    sys_unbind,
+[SYS_send]      sys_send,
+[SYS_recv]      sys_recv,
 };
 
 void

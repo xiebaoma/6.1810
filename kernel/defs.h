@@ -181,6 +181,7 @@ int             copyinstr(pagetable_t, char *, uint64, uint64);
 int             ismapped(pagetable_t, uint64);
 uint64          vmfault(pagetable_t, uint64, int);
 void            vmprint(pagetable_t);
+int             munmap_region(struct proc *, uint64, uint64, int);
 
 // plic.c
 void            plicinit(void);
@@ -209,6 +210,13 @@ uint64          sys_unbind(void);
 uint64          sys_send(void);
 uint64          sys_recv(void);
 uint64          sys_rwlktest(void);
+uint64          sys_mmap(void);
+uint64          sys_munmap(void);
+uint64          sys_interpose(void);
+uint64          sys_kpgtbl(void);
+uint64          sys_sigalarm(void);
+uint64          sys_sigreturn(void);
+uint64          sys_sleep(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

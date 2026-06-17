@@ -30,6 +30,18 @@ extern struct cpu cpus[NCPU];
 
 struct usyscall;
 
+#define MAXVMA 16
+
+struct vma {
+  int used;
+  uint64 addr;
+  uint64 len;
+  int prot;
+  int flags;
+  uint64 foff;
+  struct file *f;
+};
+
 // per-process data for the trap handling code in trampoline.S.
 // sits in a page by itself just under the trampoline page in the
 // user page table. not specially mapped in the kernel page table.
@@ -110,5 +122,7 @@ struct proc {
   uint64 alarm_handler;        // User virtual address of alarm handler
   int alarm_active;            // Non-zero while handler is running
   struct trapframe alarm_trapframe; // Saved registers before alarm handler
+  uint64 mmapbase;             // Next high address to place mmap
+  struct vma vmas[MAXVMA];     // Memory-mapped file regions
   char name[16];               // Process name (debugging)
 };
