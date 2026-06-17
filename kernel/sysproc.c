@@ -159,3 +159,12 @@ sys_sigreturn(void)
   p->alarm_ticks_left = p->alarm_interval;
   return p->trapframe->a0;
 }
+
+uint64
+sys_rwlktest(void)
+{
+  int op;
+
+  argint(0, &op);
+  return rwspinlock_unittest(op);
+}

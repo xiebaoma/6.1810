@@ -9,6 +9,7 @@ struct spinlock;
 struct sleeplock;
 struct stat;
 struct superblock;
+struct rwspinlock;
 
 // bio.c
 void            binit(void);
@@ -114,6 +115,12 @@ void            swtch(struct context*, struct context*);
 void            acquire(struct spinlock*);
 int             holding(struct spinlock*);
 void            initlock(struct spinlock*, char*);
+void            initrwlock(struct rwspinlock*);
+void            read_acquire(struct rwspinlock*);
+void            read_release(struct rwspinlock*);
+void            write_acquire(struct rwspinlock*);
+void            write_release(struct rwspinlock*);
+int             rwspinlock_unittest(int);
 void            release(struct spinlock*);
 void            push_off(void);
 void            pop_off(void);
@@ -201,6 +208,7 @@ uint64          sys_bind(void);
 uint64          sys_unbind(void);
 uint64          sys_send(void);
 uint64          sys_recv(void);
+uint64          sys_rwlktest(void);
 
 // number of elements in fixed-size array
 #define NELEM(x) (sizeof(x) / sizeof((x)[0]))

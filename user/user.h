@@ -33,6 +33,7 @@ int bind(uint16);
 int unbind(uint16);
 int send(uint16, uint32, uint16, char *, uint32);
 int recv(uint16, uint32 *, uint16 *, char *, uint32);
+int rwlktest(int);
 
 // ulib.c
 int stat(const char *, struct stat *);

@@ -2684,8 +2684,11 @@ lazy_copy(char *s)
 
   // read() and write() to these addresses should fail.
   unsigned long bad[] = {
-    0x3fffffc000, 0x3fffffd000, 0x3fffffe000,
-    0x3ffffff000, 0x4000000000, 0x8000000000,
+    USYSCALL - PGSIZE,
+    TRAPFRAME,
+    TRAMPOLINE,
+    MAXVA,
+    0x8000000000,
   };
   for (int i = 0; i < sizeof(bad) / sizeof(bad[0]); i++) {
     int fd = open("README", 0);
@@ -2728,7 +2731,7 @@ lazy_sbrk(char *s)
     p = sbrklazy(0);
   }
 
-  int n = TRAPFRAME - PGSIZE - (uint64)p;
+  int n = USYSCALL - PGSIZE - (uint64)p;
 
   char *p1 = sbrklazy(n);
   if (p1 < 0 || p1 != p) {
@@ -2737,8 +2740,8 @@ lazy_sbrk(char *s)
   }
 
   p = sbrk(PGSIZE);
-  if (p < 0 || (uint64)p != TRAPFRAME - PGSIZE) {
-    printf("sbrk(%d) returned %p, not expected TRAPFRAME-PGSIZE\n", PGSIZE, p);
+  if (p < 0 || (uint64)p != USYSCALL - PGSIZE) {
+    printf("sbrk(%d) returned %p, not expected USYSCALL-PGSIZE\n", PGSIZE, p);
     exit(1);
   }
 

@@ -51,3 +51,4 @@ entry("bind");
 entry("unbind");
 entry("send");
 entry("recv");
+entry("rwlktest");

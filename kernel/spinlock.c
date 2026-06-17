@@ -114,3 +114,139 @@ pop_off(void)
   if (c->noff == 0 && c->intena)
     intr_on();
 }
+
+void
+initrwlock(struct rwspinlock *lk)
+{
+  lk->readers = 0;
+  lk->writer = 0;
+  lk->pending_writers = 0;
+}
+
+void
+read_acquire(struct rwspinlock *lk)
+{
+  push_off();
+  for (;;) {
+    while (__atomic_load_n(&lk->writer, __ATOMIC_ACQUIRE) ||
+           __atomic_load_n(&lk->pending_writers, __ATOMIC_ACQUIRE))
+      ;
+
+    __atomic_fetch_add(&lk->readers, 1, __ATOMIC_ACQUIRE);
+    if (__atomic_load_n(&lk->writer, __ATOMIC_ACQUIRE) == 0 &&
+        __atomic_load_n(&lk->pending_writers, __ATOMIC_ACQUIRE) == 0)
+      break;
+    __atomic_fetch_sub(&lk->readers, 1, __ATOMIC_RELEASE);
+  }
+}
+
+void
+read_release(struct rwspinlock *lk)
+{
+  if (__atomic_fetch_sub(&lk->readers, 1, __ATOMIC_RELEASE) < 1)
+    panic("read_release");
+  pop_off();
+}
+
+void
+write_acquire(struct rwspinlock *lk)
+{
+  push_off();
+  __atomic_fetch_add(&lk->pending_writers, 1, __ATOMIC_ACQUIRE);
+  while (__atomic_exchange_n(&lk->writer, 1, __ATOMIC_ACQUIRE) != 0)
+    ;
+  while (__atomic_load_n(&lk->readers, __ATOMIC_ACQUIRE) != 0)
+    ;
+  __atomic_fetch_sub(&lk->pending_writers, 1, __ATOMIC_RELEASE);
+}
+
+void
+write_release(struct rwspinlock *lk)
+{
+  if (__atomic_load_n(&lk->writer, __ATOMIC_ACQUIRE) == 0)
+    panic("write_release");
+  __atomic_store_n(&lk->writer, 0, __ATOMIC_RELEASE);
+  pop_off();
+}
+
+enum {
+  RWTEST_RESET = 0,
+  RWTEST_READER = 1,
+  RWTEST_WRITER = 2,
+  RWTEST_CHECK = 3,
+};
+
+static struct rwspinlock rwtest_lk;
+static uint rwtest_inited;
+static uint rwtest_readers;
+static uint rwtest_writers;
+static uint rwtest_writer_waiting;
+static uint rwtest_violations;
+static uint rwtest_writes;
+
+int
+rwspinlock_unittest(int op)
+{
+  volatile int i;
+  uint readers, writers, waiting, violations, writes;
+
+  if (!rwtest_inited) {
+    initrwlock(&rwtest_lk);
+    rwtest_inited = 1;
+  }
+
+  switch (op) {
+  case RWTEST_RESET:
+    initrwlock(&rwtest_lk);
+    __atomic_store_n(&rwtest_readers, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&rwtest_writers, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&rwtest_writer_waiting, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&rwtest_violations, 0, __ATOMIC_RELEASE);
+    __atomic_store_n(&rwtest_writes, 0, __ATOMIC_RELEASE);
+    return 0;
+
+  case RWTEST_READER:
+    for (i = 0; i < 2000; i++) {
+      read_acquire(&rwtest_lk);
+      if (__atomic_load_n(&rwtest_writers, __ATOMIC_ACQUIRE) != 0 ||
+          __atomic_load_n(&rwtest_writer_waiting, __ATOMIC_ACQUIRE) != 0)
+        __atomic_fetch_add(&rwtest_violations, 1, __ATOMIC_ACQ_REL);
+      __atomic_fetch_add(&rwtest_readers, 1, __ATOMIC_ACQ_REL);
+      for (volatile int j = 0; j < 50; j++)
+        ;
+      __atomic_fetch_sub(&rwtest_readers, 1, __ATOMIC_ACQ_REL);
+      read_release(&rwtest_lk);
+    }
+    return 0;
+
+  case RWTEST_WRITER:
+    for (i = 0; i < 500; i++) {
+      __atomic_fetch_add(&rwtest_writer_waiting, 1, __ATOMIC_ACQ_REL);
+      write_acquire(&rwtest_lk);
+      if (__atomic_load_n(&rwtest_writers, __ATOMIC_ACQUIRE) != 0 ||
+          __atomic_load_n(&rwtest_readers, __ATOMIC_ACQUIRE) != 0)
+        __atomic_fetch_add(&rwtest_violations, 1, __ATOMIC_ACQ_REL);
+      __atomic_store_n(&rwtest_writers, 1, __ATOMIC_RELEASE);
+      __atomic_fetch_add(&rwtest_writes, 1, __ATOMIC_ACQ_REL);
+      for (volatile int j = 0; j < 100; j++)
+        ;
+      __atomic_store_n(&rwtest_writers, 0, __ATOMIC_RELEASE);
+      write_release(&rwtest_lk);
+      __atomic_fetch_sub(&rwtest_writer_waiting, 1, __ATOMIC_ACQ_REL);
+    }
+    return 0;
+
+  case RWTEST_CHECK:
+    readers = __atomic_load_n(&rwtest_readers, __ATOMIC_ACQUIRE);
+    writers = __atomic_load_n(&rwtest_writers, __ATOMIC_ACQUIRE);
+    waiting = __atomic_load_n(&rwtest_writer_waiting, __ATOMIC_ACQUIRE);
+    violations = __atomic_load_n(&rwtest_violations, __ATOMIC_ACQUIRE);
+    writes = __atomic_load_n(&rwtest_writes, __ATOMIC_ACQUIRE);
+    if (readers == 0 && writers == 0 && waiting == 0 && violations == 0 &&
+        writes > 0)
+      return 0;
+    return -1;
+  }
+
+  return -1;
+}

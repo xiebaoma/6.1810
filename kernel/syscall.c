@@ -110,6 +110,7 @@ extern uint64 sys_bind(void);
 extern uint64 sys_unbind(void);
 extern uint64 sys_send(void);
 extern uint64 sys_recv(void);
+extern uint64 sys_rwlktest(void);
 
 // An array mapping syscall numbers from syscall.h
 // to the function that handles the system call.
@@ -144,6 +145,7 @@ static uint64 (*syscalls[])(void) = {
   [SYS_unbind]  sys_unbind,
   [SYS_send]    sys_send,
   [SYS_recv]    sys_recv,
+  [SYS_rwlktest] sys_rwlktest,
   // clang-format on
 };
 

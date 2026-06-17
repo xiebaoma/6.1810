@@ -157,6 +157,7 @@ UPROGS=\
 	$U/_memdump\
 	$U/_mkdir\
 	$U/_rm\
+	$U/_rwlktest\
 	$U/_sh\
 	$U/_sixfive\
 	$U/_sleep\
